@@ -145,7 +145,7 @@ export default {
           await send(env, chatId, image.error);
           return new Response("OK");
         }
-        if (env.GITHUB_TOKEN && env.GITHUB_REPO) {
+        if (env.GITHUB_TOKEN && env.GITHUB_REPO && chatId === String(env.OWNER_ID)) {
           ctx.waitUntil(backupImageToGitHub(env, image, msg).catch((e) => console.error("img backup failed", e)));
         }
       }
@@ -287,11 +287,18 @@ async function agentTurnInner(env, chatId, userText, died, image, fileSummary) {
       const prep = await buildRequest(env, tool);
       if (!prep.error) return await requestApproval(env, chatId, userText, tool, prep);
       result = prep.error;
-    } else if (tool.tool === "github_api" && !isReadMethod(tool.method)) {
+    } else if (tool.tool === "github_api" && chatId !== String(env.OWNER_ID)) {
+      result = "🔐 کار با گیت‌هاب فقط برای ادمین ربات است.";
+  } else if (tool.tool === "github_api" && !isReadMethod(tool.method)) {
       // نوشتن/حذف در گیت‌هاب: فقط بعد از تأیید کاربر
       const prep = await buildGhRequest(env, tool);
       if (!prep.error) return await requestGhApproval(env, chatId, tool, prep);
       result = prep.error;
+    } else if (tool.tool === "github_api") {
+      // github_api reads — admin-only, direct call
+      await notifyTool(env, chatId, tool);
+      const prep = await buildGhRequest(env, tool);
+      result = prep.error || await execGhApi(env, prep, true);
     } else {
       await notifyTool(env, chatId, tool);
       result = await runTool(env, tool);
