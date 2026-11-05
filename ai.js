@@ -95,8 +95,12 @@ export default {
         if (msg) await send(env, chatId, `OWNER_ID تنظیم نشده. آیدی چت شما: ${chatId}\nاین را در متغیرها بگذارید و دوباره دیپلوی کنید.`);
         return new Response("OK");
       }
-      if (chatId !== String(env.OWNER_ID)) return new Response("OK");
-      if (cq && String(cq.from?.id) !== String(env.OWNER_ID)) return new Response("OK");
+      // حالت چندکاربره: همه با ربات حرف می‌زنند؛ دکمه‌های تأیید فقط ادمین
+      const isAdmin = chatId === String(env.OWNER_ID);
+      if (cq && !isAdmin) {
+        if (cq.message) await tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "فقط ادمین" }).catch(() => {});
+        return new Response("OK");
+      }
       notifyChat = chatId;
 
       // جلوگیری از پردازش تکراری (تلگرام اگر دیر جواب بگیرد دوباره می‌فرستد)
@@ -760,6 +764,7 @@ async function handleCommand(env, chatId, text, msgId) {
     }
 
     case "/persona": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       if (arg === "reset") {
         await env.DB.prepare("DELETE FROM settings WHERE key = 'persona'").run();
         return send(env, chatId, "شخصیت به حالت پیش‌فرض برگشت.");
@@ -773,6 +778,7 @@ async function handleCommand(env, chatId, text, msgId) {
     }
 
     case "/learn": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       if (!arg) return send(env, chatId, "مثال: /learn همیشه جواب‌ها را کوتاه و با بولت بنویس");
       const r = await reflect(env, arg).catch((e) => ({ ok: false, raw: "خطا: " + e.message }));
       if (!r.ok) return send(env, chatId, "یادگیری ناموفق بود ❌\nخروجی مدل:\n" + String(r.raw).slice(0, 800));
@@ -781,17 +787,23 @@ async function handleCommand(env, chatId, text, msgId) {
         : "مدل تصمیم گرفت چیزی ذخیره نکند. خروجی:\n" + String(r.raw).slice(0, 800));
     }
 
-    case "/delskill":
+    case "/delskill": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       await env.DB.prepare("DELETE FROM skills WHERE name = ?").bind(arg).run();
       return send(env, chatId, "انجام شد.");
+    }
 
-    case "/forget":
+    case "/forget": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       await env.DB.prepare("DELETE FROM memories WHERE id = ?").bind(parseInt(arg, 10) || -1).run();
       return send(env, chatId, "انجام شد.");
+    }
 
-    case "/reset":
+    case "/reset": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       await env.DB.prepare("DELETE FROM messages WHERE chat_id = ?").bind(chatId).run();
       return send(env, chatId, "تاریخچه گفتگو پاک شد (حافظه و اسکیل‌ها حفظ شدند).");
+    }
 
     case "/report":
       return send(env, chatId, await weeklyReport(env));
@@ -804,10 +816,13 @@ async function handleCommand(env, chatId, text, msgId) {
       await setSetting(env, "show_learning", "1");
       return send(env, chatId, "از این به بعد هر وقت چیزی یاد بگیرم زیر پاسخ می‌نویسم.");
 
-    case "/debug":
+    case "/debug": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       return send(env, chatId, "آخرین خروجی خام یادگیری:\n\n" + ((await getSetting(env, "last_reflection")) || "(هنوز چیزی اجرا نشده)"));
+    }
 
     case "/backup": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       const ok = await backupToGitHub(env).catch((e) => e.message);
       return send(env, chatId, ok === true ? "بکاپ در گیت‌هاب ذخیره شد ✅"
         : ok === false ? "GITHUB_TOKEN یا GITHUB_REPO تنظیم نشده."
@@ -815,6 +830,7 @@ async function handleCommand(env, chatId, text, msgId) {
     }
 
     case "/restore": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       const r = await restoreFromGitHub(env).catch((e) => e.message);
       return send(env, chatId, typeof r === "object"
         ? `بازگردانی شد ✅ (${r.skills} اسکیل، ${r.memories} حافظه${r.persona ? "، شخصیت" : ""})`
@@ -822,6 +838,7 @@ async function handleCommand(env, chatId, text, msgId) {
     }
 
     case "/connect": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       const p = arg.split(/\s+/).filter(Boolean);
       if (p.length < 3) {
         return send(env, chatId,
@@ -877,11 +894,14 @@ async function handleCommand(env, chatId, text, msgId) {
       return send(env, chatId, l.length ? l.map((x) => `• ${x.name} → ${x.base_url}`).join("\n") : "هیچ سرویسی متصل نیست. با /connect اضافه کن.");
     }
 
-    case "/disconnect":
+    case "/disconnect": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       await env.DB.prepare("DELETE FROM credentials WHERE name = ?").bind(arg.toLowerCase()).run();
       return send(env, chatId, "اگر وجود داشت، حذف شد. (برای امنیت کامل، توکن را در خود سرویس هم revoke کن.)");
+    }
 
     case "/audit": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       const r = await env.DB.prepare("SELECT ts, service, method, url, status, approved FROM audit ORDER BY id DESC LIMIT 10").all();
       return send(env, chatId, r.results.length
         ? r.results.map((a) => `${new Date(a.ts).toISOString().slice(5, 16).replace("T", " ")} ${a.approved ? "✅" : "•"} ${a.service} ${a.method} ${a.url.replace(/^https?:\/\//, "").slice(0, 70)} → ${a.status}`).join("\n")
