@@ -1,0 +1,19 @@
+name = "ai-agent"
+main = "ai.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+AI_API_URL = "https://tokenharbor.ai/v1/chat/completions"
+AI_MODEL = "deepseek-v4.1-flash:free"
+TIMEZONE = "Asia/Tehran"
+SELF_WORKER_NAME = "ai-agent"
+# OWNER_ID = "123456789"          # بعد از اولین پیام به ربات، آیدی چت خودت را اینجا بگذار
+# GITHUB_REPO = "mohmdnini26/agent-backup"  # ریپوی خصوصی بکاپ
+
+[[d1_databases]]
+binding = "DB"
+database_name = "agent-db"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+[triggers]
+crons = ["0 2 * * *"]
