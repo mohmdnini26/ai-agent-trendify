@@ -138,7 +138,7 @@ export default {
 
       // جلوگیری از پردازش تکراری (تلگرام اگر دیر جواب بگیرد دوباره می‌فرستد)
       if (typeof payload.update_id === "number") {
-        const last = parseInt((await getSetting(env, "last_update_id")) || "0", 10);
+        const last = parseInt((await getSetting(env, "last_update_id")) || "-1", 10);
         if (payload.update_id <= last) return new Response("OK");
         await setSetting(env, "last_update_id", String(payload.update_id));
       }
@@ -152,7 +152,12 @@ export default {
       ctx.waitUntil(typing(env, chatId));
 
       if (!isImageMsg && text.startsWith("/")) {
-        await handleCommand(env, chatId, text, msg.message_id);
+        try {
+          await handleCommand(env, chatId, text, msg.message_id);
+        } catch (cmdErr) {
+          console.error("CMD_ERROR", cmdErr);
+          await send(env, chatId, "خطا در پردازش دستور: " + cmdErr.message).catch(() => {});
+        }
         return new Response("OK");
       }
 
