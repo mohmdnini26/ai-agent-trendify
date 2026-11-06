@@ -65,8 +65,7 @@ ${TOOL_MARK} {"tool":"build_apk","repo":"نام-ریپو","zip":"نام-فایل
 ${TOOL_MARK} {"tool":"create_bot","name":"نام-ربات","token":"توکن-تلگرام","description":"ربات-چه-کاری-انجام-دهد"}
 ${TOOL_MARK} {"tool":"send_telegram_message","token":"توکن-ربات-یا-از-تنظیمات","chat_id":"آیدی-گیرنده","text":"متن"}
 ${TOOL_MARK} {"tool":"create_panel","name":"نام-پنل","tar":"base64-فایل-تار-پروژه","platform":"workers|pages|node","domain":"دامنه-اختیاری","description":"توضیح-پنل-چیست"}
-${TOOL_MARK} {"tool":"deploy_panel","repo":"ریپو-پنل","branch":"main"}
-(برای deploy_worker کد کامل Worker را بلافاصله بعد از همین خط در یک بلوک \`\`\`js بنویس؛ نه داخل JSON. یک Worker با export default { async fetch() {...} } که HTML سایت را برمی‌گرداند. فقط خود کد، بدون وابستگی خارجی. اگر account_id را نمی‌دانی اول GET /accounts را با http_request بزن. این کار همیشه تأیید کاربر می‌گیرد.)
+${TOOL_MARK} {"tool":"deploy_panel","repo":"ریپو-پنل","branch":"main"}\n${TOOL_MARK} {"tool":"calculate","expression":"2+2*10"}\n${TOOL_MARK} {"tool":"weather","city":"تهران"}\n${TOOL_MARK} {"tool":"crypto_price","coins":"bitcoin,ethereum"}\n${TOOL_MARK} {"tool":"wikipedia","query":"عبارت","lang":"fa"}\n${TOOL_MARK} {"tool":"ip_info","ip":"8.8.8.8"}\n${TOOL_MARK} {"tool":"hash","text":"متن","algo":"SHA-256"}\n${TOOL_MARK} {"tool":"qr_code","text":"متن-برای-QR"}\n${TOOL_MARK} {"tool":"password","length":16}\n${TOOL_MARK} {"tool":"time_tool","timezone":"Asia/Tehran"}\nبرای سؤال آب‌وهوا حتماً tool آب‌وهوا را بخواه، برای قیمت ارز دیجیتال crypto_price، برای محاسبه calculate، برای معنی/دانش wikipedia. این‌ها را از حافظه نحدس بزن — همیشه ابزار مربوطه را صدا کن.\n(برای deploy_worker کد کامل Worker را بلافاصله بعد از همین خط در یک بلوک \`\`\`js بنویس؛ نه داخل JSON. یک Worker با export default { async fetch() {...} } که HTML سایت را برمی‌گرداند. فقط خود کد، بدون وابستگی خارجی. اگر account_id را نمی‌دانی اول GET /accounts را با http_request بزن. این کار همیشه تأیید کاربر می‌گیرد.)
 فقط از همین قالب ###TOOL### استفاده کن (نه <tool_call> یا هر قالب دیگر).
 هرگز بدون صدا زدن ابزار نگو «الان چک می‌کنم / صبر کن / بذار ببینم»؛ یا همان لحظه ابزار را بخواه یا پاسخ نهایی بده. اگر کاربر گفت «ادامه بده»، «چی شد» یا «دوباره»، یعنی همان کار قبلی را ادامه بده، نه اینکه دوباره سؤال کنی.
 قوانین github_api: مستقیم به api.github.com می‌زند (نیازی به سرویس متصل ندارد). method GET/POST/PUT/PATCH/DELETE و path نسبی به api.github.com. GET بلافاصله اجرا می‌شود؛ نوشتن/حذف تأیید کاربر می‌خواهد. برای ساخت ریپو: POST /user/repos با body {"name":"..."}. برای آپلود فایل: PUT /repos/{owner}/{repo}/contents/{path} با body {"message":"...","content":"base64"}. برای فورک کردن ریپوی دیگران: POST /repos/{owner}/{repo}/forks (بدون body لازم). برای اجرای workflow: POST /repos/{owner}/{repo}/actions/workflows/{file}/dispatches با body {"ref":"main"} (پاسخ ۲۰۴ یعنی موفق). وضعیت بیلد: GET /repos/{owner}/{repo}/actions/runs?per_page=3. توکن از env.GITHUB_TOKEN می‌آید و دیده نمی‌شود.
@@ -336,7 +335,7 @@ async function agentTurnInner(env, chatId, userText, died, image, fileSummary) {
       result = prep.error || await execGhApi(env, prep, true);
     } else {
       await notifyTool(env, chatId, tool);
-      result = await runTool(env, tool);
+      result = await runTool(env, tool, chatId);
     }
     toolsUsed.push(tool.tool);
     // گزارش پیشرفت در تاریخچه، تا اگر نوبت قطع شد بشود از همان‌جا ادامه داد
@@ -431,7 +430,7 @@ function parseMarkedTool(raw) {
   if (j >= 0) seg = seg.slice(0, j);
   // ابتدا فقط خط اول (برای حالتی که کد بعد از آن آمده)، بعد کل متن
   const t = parseJSON(seg.split("\n")[0]) || parseJSON(seg);
-  if (!t || !["web_search", "read_url", "http_request", "search_history", "deploy_worker", "github_api", "build_apk", "create_bot", "send_telegram_message", "create_panel", "deploy_panel"].includes(t.tool)) return null;
+  if (!t || !["web_search", "read_url", "http_request", "search_history", "deploy_worker", "github_api", "build_apk", "create_bot", "send_telegram_message", "create_panel", "deploy_panel", "calculate", "weather", "crypto_price", "wikipedia", "ip_info", "hash", "qr_code", "password", "time_tool"].includes(t.tool)) return null;
   if (t.tool === "deploy_worker" && typeof t.code !== "string") {
     const m = seg.match(/```(?:js|javascript|mjs)?\s*\n([\s\S]*?)```/i);
     if (m) t.code = m[1];
@@ -477,7 +476,7 @@ function nowString(env) {
 
 // ==================== ابزارها ====================
 
-async function runTool(env, t) {
+async function runTool(env, t, chatId) {
   try {
     if (t.tool === "web_search") return await toolWebSearch(env, String(t.query || "").slice(0, 200));
     if (t.tool === "read_url") return await toolReadUrl(String(t.url || ""));
@@ -497,10 +496,118 @@ async function runTool(env, t) {
     if (t.tool === "send_telegram_message") return await sendTelegramMsg(env, t);
     if (t.tool === "create_panel") return await createPanel(env, t);
     if (t.tool === "deploy_panel") return await deployPanel(env, t);
+    if (t.tool === "calculate") return toolCalculate(String(t.expression || ""));
+    if (t.tool === "weather") return await toolWeather(String(t.city || ""));
+    if (t.tool === "crypto_price") return await toolCrypto(String(t.coins || "bitcoin,ethereum,tether"));
+    if (t.tool === "wikipedia") return await toolWikipedia(String(t.query || ""), String(t.lang || "fa"));
+    if (t.tool === "ip_info") return await toolIpInfo(String(t.ip || ""));
+    if (t.tool === "hash") return await toolHash(String(t.text || ""), String(t.algo || "SHA-256"));
+    if (t.tool === "qr_code") return await toolQr(env, chatId, String(t.text || t.data || ""));
+    if (t.tool === "password") return toolPassword(parseInt(t.length, 10) || 16);
+    if (t.tool === "time_tool") return toolTime(String(t.timezone || "Asia/Tehran"));
   } catch (e) {
     return "خطا در اجرای ابزار: " + e.message;
   }
   return "ابزار ناشناخته.";
+}
+
+// ==================== ابزارهای عمومی (v14) ====================
+
+function toolCalculate(expr) {
+  const clean = String(expr || "").replace(/[\u06F0-\u06F9]/g, (c) => String(c.charCodeAt(0) - 0x06F0)).replace(/[×x]/g, "*").replace(/÷/g, "/");
+  if (!/^[0-9+\-*/().,%^\s]+$/.test(clean)) return "عبارت فقط می‌تواند شامل اعداد و + - * / ( ) % ^ باشد.";
+  try {
+    const js = clean.replace(/\^/g, "**");
+    const val = Function('"use strict"; return (' + js + ')')();
+    if (typeof val !== "number" || !isFinite(val)) return "نتیجه معتبر نیست.";
+    return `${expr} = ${val}`;
+  } catch (e) { return "محاسبه ناموفق: " + e.message; }
+}
+
+async function toolWeather(city) {
+  if (!city.trim()) return "نام شهر را بده (مثال: تهران).";
+  try {
+    const g = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=fa`, { signal: AbortSignal.timeout(15000) }).then(r => r.json());
+    const loc = g?.results?.[0];
+    if (!loc) return `شهر «${city}» پیدا نشد.`;
+    const w = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=auto`, { signal: AbortSignal.timeout(15000) }).then(r => r.json());
+    const c = w.current, d = w.daily;
+    const codes = { 0: "صاف ☀️", 1: "کمی ابری 🌤", 2: "نیمه‌ابری ⛅", 3: "ابری ☁️", 45: "مه 🌫", 51: "نم‌نم باران 🌦", 61: "باران 🌧", 63: "باران شدید 🌧", 80: "رگبار 🌦", 95: "رعد و برق ⛈" };
+    return `🌤 آب و هوای ${loc.name}${loc.country ? "، " + loc.country : ""}:\n` +
+      `• وضعیت: ${codes[c.weather_code] || "کد " + c.weather_code}\n` +
+      `• دما: ${Math.round(c.temperature_2m)}°C (احساس واقعی ${Math.round(c.apparent_temperature)}°)\n` +
+      `• رطوبت: ${c.relative_humidity_2m}% | باد: ${Math.round(c.wind_speed_10m)} km/h\n` +
+      `• امروز: ${Math.round(d.temperature_2m_min[0])} تا ${Math.round(d.temperature_2m_max[0])}°C\n` +
+      `• فردا: ${Math.round(d.temperature_2m_min[1])} تا ${Math.round(d.temperature_2m_max[1])}°C`;
+  } catch (e) { return "خطای آب و هوا: " + e.message; }
+}
+
+async function toolCrypto(coins) {
+  try {
+    const list = String(coins).split(/[,،\s]+/).filter(Boolean).slice(0, 8).join(",");
+    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(list)}&vs_currencies=usd&include_24hr_change=true`, { signal: AbortSignal.timeout(15000) });
+    const j = await res.json();
+    if (!res.ok || !j) return `خطای کوین‌گکو (HTTP ${res.status})`;
+    const lines = Object.entries(j).map(([id, v]) =>
+      `• ${id}: $${v.usd.toLocaleString("en-US")} (${v.usd_24h_change >= 0 ? "▲" : "▼"} ${Math.abs(v.usd_24h_change || 0).toFixed(2)}% در ۲۴ ساعت)`);
+    return "💰 قیمت لحظه‌ای:\n" + lines.join("\n");
+  } catch (e) { return "خطای قیمت ارز: " + e.message; }
+}
+
+async function toolWikipedia(query, lang) {
+  if (!query.trim()) return "عبارت جستجو خالی بود.";
+  const L = /^[a-z]{2}$/.test(lang) ? lang : "fa";
+  try {
+    const s = await fetch(`https://${L}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=1`, { signal: AbortSignal.timeout(15000) }).then(r => r.json());
+    const hit = s?.query?.search?.[0];
+    if (!hit) return `در ویکی‌پدیا (${L}) نتیجه‌ای برای «${query}» نبود.`;
+    const sum = await fetch(`https://${L}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(hit.title)}`, { signal: AbortSignal.timeout(15000) }).then(r => r.json());
+    return `📚 ${sum.title}:\n${(sum.extract || "").slice(0, 900)}${sum.content_urls ? `\n\n${sum.content_urls.desktop.page}` : ""}`;
+  } catch (e) { return "خطای ویکی‌پدیا: " + e.message; }
+}
+
+async function toolIpInfo(ip) {
+  try {
+    const res = await fetch(`http://ip-api.com/json/${encodeURIComponent(ip || "")}?fields=status,country,city,isp,org,as,query,timezone,proxy,hosting,message`, { signal: AbortSignal.timeout(15000) });
+    const j = await res.json();
+    if (j.status !== "success") return `خطا: ${j.message || "IP نامعتبر"}`;
+    return `🌐 اطلاعات IP ${j.query}:\n• کشور: ${j.country}\n• شهر: ${j.city || "-"}\n• ISP: ${j.isp}\n• سازمان: ${j.org || "-"}\n• منطقه زمانی: ${j.timezone}${j.proxy !== undefined ? `\n• پروکسی: ${j.proxy ? "بله" : "خیر"}` : ""}`;
+  } catch (e) { return "خطای IP: " + e.message; }
+}
+
+async function toolHash(text, algo) {
+  const algos = ["SHA-1", "SHA-256", "SHA-384", "SHA-512"];
+  const A = algos.find((a) => a.toLowerCase() === String(algo).toLowerCase().replace("-", "")) || (algos.includes(String(algo)) ? String(algo) : "SHA-256");
+  const buf = await crypto.subtle.digest(A, new TextEncoder().encode(text));
+  const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${A}:\n${hex}`;
+}
+
+async function toolQr(env, chatId, data) {
+  if (!data.trim()) return "متنی برای QR بده.";
+  const url = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(data)}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) return "ساخت QR ناموفق بود.";
+    const b64 = toB64(new Uint8Array(await res.arrayBuffer()));
+    const form = new FormData();
+    form.append("chat_id", String(chatId));
+    form.append("photo", new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type: "image/png" }), "qr.png");
+    form.append("caption", `QR برای: ${data.slice(0, 100)}`);
+    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendPhoto`, { method: "POST", body: form, signal: AbortSignal.timeout(30000) });
+    return "QR ساخته و فرستاده شد.";
+  } catch (e) { return "خطای QR: " + e.message; }
+}
+
+function toolPassword(len) {
+  const n = Math.min(Math.max(len || 16, 8), 64);
+  const chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*-_=+";
+  const arr = crypto.getRandomValues(new Uint32Array(n));
+  return "🔑 رمز پیشنهادی:\n`" + [...arr].map((x) => chars[x % chars.length]).join("") + "`";
+}
+
+function toolTime(tz) {
+  try { return "🕒 " + nowString({ TIMEZONE: tz }); } catch { return "منطقه زمانی نامعتبر."; }
 }
 
 async function notifyTool(env, chatId, t) {
