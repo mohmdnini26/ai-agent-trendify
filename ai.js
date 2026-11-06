@@ -2092,25 +2092,77 @@ export default {
   });
   if (!pushR.ok) return "خطا در پوش کد: " + pushR.text;
 
+  // Deploy worker to Cloudflare (استقرار دائمی)
+  const deployResult = await deployBotWorker(env, botName, workerCode, token);
+  if (deployResult.error) {
+    // Worker deploy نشد ولی ریپو ساخته شد — به کاربر بگو
+    return `⚠️ ریپو ساخته شد ولی دیپلوی کلودفلر ناموفق بود:\n📦 https://github.com/${ghRepo}\n❌ خطا: ${deployResult.error}\n\nدوباره تلاش کن یا دستی deploy کن.`;
+  }
+  const workerUrl = deployResult.url;
+
   // Set webhook on Telegram
-  const workerUrl = "https://bot-" + botName + ".smira55.workers.dev/";
-  await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+  const wh = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: workerUrl, drop_pending_updates: false })
-  }).catch(() => {});
+    body: JSON.stringify({ url: workerUrl, secret_token: crypto.randomUUID().replace(/-/g, ""), drop_pending_updates: false })
+  }).then(r => r.json()).catch(() => ({ ok: false }));
 
   // Save bot in DB
   await env.DB.prepare(
     "INSERT OR REPLACE INTO credentials (name, base_url, header, prefix, secret_enc, created_at) VALUES (?, ?, ?, ?, ?, ?)"
   ).bind(botName, ghRepo, "bot_token", "", btoa(token), Date.now()).run();
 
-  return `✅ ربات «${name}» ساخته شد!\n` +
+  return `✅ ربات «${name}» ساخته و دیپلوی شد!\n` +
     `📦 ریپو: https://github.com/${ghRepo}\n` +
-    `🤖 توکن: ${token}\n` +
-    `💬 توضیح: ${description}\n\n` +
-    `در حال حاضر یک Worker ساده روی این ربات است. ` +
-    `برای قابلیت‌های پیشرفته، بگو تا آن را ارتقا دهم.`;
+    `🌐 ورکر: ${workerUrl}\n` +
+    `🔗 وبهوک: ${wh.ok ? "وصل شد ✅" : "خطا: " + (wh.description || "نامشخص")}\n` +
+    `💬 مأموریت: ${description}\n\n` +
+    `ربات الان فعال است — می‌توانی بهش پیام بدهی. برای ارتقا بگو.`;
+}
+
+// دیپلوی Worker ربات جدید روی Cloudflare
+async function deployBotWorker(env, botName, workerCode, botToken) {
+  if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID) return { error: "CF_API_TOKEN یا CF_ACCOUNT_ID تنظیم نشده" };
+  const workerName = "bot-" + botName;
+  const boundary = "----botform" + Date.now();
+  const meta = {
+    "main_module": "worker.js",
+    "compatibility_date": "2024-09-23",
+    "bindings": [
+      {"name":"BOT_TOKEN","type":"secret_text","text":botToken},
+      {"name":"AI_API_KEY","type":"secret_text","text":env.AI_API_KEY || ""},
+      {"name":"AI_API_URL","type":"plain_text","text":env.AI_API_URL || "https://wusrouter.com/v1/chat/completions"},
+      {"name":"AI_MODEL","type":"plain_text","text":env.AI_MODEL || "wusrouter/gpt-5.6-terra:free"}
+    ]
+  };
+  let body = "";
+  body += `--${boundary}\r\nContent-Disposition: form-data; name="metadata"; filename="metadata.json"\r\nContent-Type: application/json\r\n\r\n` + JSON.stringify(meta) + "\r\n";
+  body += `--${boundary}\r\nContent-Disposition: form-data; name="worker.js"; filename="worker.js"\r\nContent-Type: application/javascript+module\r\n\r\n` + workerCode + "\r\n";
+  body += `--${boundary}--\r\n`;
+
+  try {
+    const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/workers/scripts/${workerName}`, {
+      method: "PUT",
+      headers: { "Authorization": "Bearer " + env.CF_API_TOKEN, "Content-Type": "multipart/form-data; boundary=" + boundary },
+      body
+    });
+    const data = await res.json();
+    if (!data.success) return { error: (data.errors || []).map(e => e.message).join(", ") || "HTTP " + res.status };
+
+    // Enable workers.dev subdomain
+    await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/workers/scripts/${workerName}/subdomain`, {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + env.CF_API_TOKEN, "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: true, previews_enabled: true })
+    }).catch(() => {});
+
+    // Get subdomain
+    const sd = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/workers/subdomain`, {
+      headers: { "Authorization": "Bearer " + env.CF_API_TOKEN }
+    }).then(r => r.json()).catch(() => null);
+    const sub = sd?.result?.subdomain || "smira55";
+    return { url: `https://${workerName}.${sub}.workers.dev/` };
+  } catch(e) { return { error: e.message }; }
 }
 
 async function sendTelegramMsg(env, { token, chat_id, text }) {
