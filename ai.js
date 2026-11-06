@@ -16,8 +16,8 @@ const HISTORY_LIMIT = 12;     // پیام‌های اخیر که به مدل د�
 const MAX_MEMORIES = 80;
 const MAX_SKILLS = 30;
 const KEEP_MESSAGES = 300;
-const MAX_TOOL_ROUNDS = 6;    // حداکثر دفعات استفاده از ابزار در هر پیام
-const DEADLINE_MS = 40000;    // بعد از این مدت دیگر ابزار جدید نمی‌خواهد و جمع‌بندی می‌کند
+const MAX_TOOL_ROUNDS = 10;   // حداکثر دفعات استفاده از ابزار در هر پیام (کارهای چندمرحله‌ای مثل فورک+بیلد)
+const DEADLINE_MS = 110000;   // بعد از این مدت دیگر ابزار جدید نمی‌خواهد و جمع‌بندی می‌کند (فچ شبکه CPU نمی‌خورد، امن است)
 const PENDING_TTL = 3600000;  // اعتبار درخواست‌های منتظر تأیید (۱ ساعت)
 const LEARN_MARK = "###LEARN###";
 const TOOL_MARK = "###TOOL###";
@@ -39,6 +39,8 @@ const SELF_KNOWLEDGE = `
 - فایل و ZIP دریافت می‌کنی: ساختارش را تحلیل می‌کنی و محتوای فایل‌های کلیدی را می‌خوانی.
 - با ابزار github_api به همه‌چیز گیت‌هاب دسترسی داری (ریپو، کامیت، issue، ...).
 - با ابزار build_apk می‌توانی از سورس اندروید APK بسازی (ریپو + GitHub Actions) و با /buildstatus وضعیت و فایل APK را بگیری و بفرستی.
+- قانون طلایی ساخت پروژه‌های واقعی: اگر کاربر پروژه بزرگ و واقعی خواست (VPN اندروید، اپ کامل، ربات حرفه‌ای)، هرگز خودت از صفر کد ننویس — اول در گیت‌هاب یک ریپوی واقعی و آماده با جستجو پیدا کن (ابزار web_search برای پیدا کردن ریپوی مناسب + github_api برای بررسی ساختارش)، آن را با github_api برایکارش کن (POST /repos/{owner}/{repo}/forks)، بعد تغییرات کوچک لازم (نام، تم، برندینگ) را با PUT contents اعمال کن و آخر workflow بیلد را اجرا کن. نوشتن از صفر فقط برای پروژه‌های کوچک (تا ۱۰ فایل) مجاز است.
+- اگر زیپی که کاربر فرستاد فقط ظاهر وب بود (React/Vite/tsx بدون build.gradle و AndroidManifest)، صادقانه بگو «این یک اپ وب است، از آن مستقیم APK نمی‌شود ساخت» و دو راه واقعی بده: (۱) فورک کردن یک ریپوی اندروید واقعی مشابه، (۲) تبدیل طراحی به پروژه اندروید بومی. هرگز ادعا نکن از زیپ وب APK ساخته می‌شود.
 محدودیت‌های واقعی: وزن‌های مدل را تغییر نمی‌دهی و کد اجرا نمی‌کنی؛ یادگیری تو از طریق حافظه و اسکیل‌های متنی است. شخصیت تو را فقط خود کاربر با دستور /persona عوض می‌کند. اگر درباره توانایی‌هایت پرسیدند، همین را صادقانه بگو.
 `;
 
@@ -67,8 +69,8 @@ ${TOOL_MARK} {"tool":"deploy_panel","repo":"ریپو-پنل","branch":"main"}
 (برای deploy_worker کد کامل Worker را بلافاصله بعد از همین خط در یک بلوک \`\`\`js بنویس؛ نه داخل JSON. یک Worker با export default { async fetch() {...} } که HTML سایت را برمی‌گرداند. فقط خود کد، بدون وابستگی خارجی. اگر account_id را نمی‌دانی اول GET /accounts را با http_request بزن. این کار همیشه تأیید کاربر می‌گیرد.)
 فقط از همین قالب ###TOOL### استفاده کن (نه <tool_call> یا هر قالب دیگر).
 هرگز بدون صدا زدن ابزار نگو «الان چک می‌کنم / صبر کن / بذار ببینم»؛ یا همان لحظه ابزار را بخواه یا پاسخ نهایی بده. اگر کاربر گفت «ادامه بده»، «چی شد» یا «دوباره»، یعنی همان کار قبلی را ادامه بده، نه اینکه دوباره سؤال کنی.
-قوانین github_api: مستقیم به api.github.com می‌زند (نیازی به سرویس متصل ندارد). method GET/POST/PUT/PATCH/DELETE و path نسبی به api.github.com. GET بلافاصله اجرا می‌شود؛ نوشتن/حذف تأیید کاربر می‌خواهد. برای ساخت ریپو: POST /user/repos با body {"name":"..."}. برای آپلود فایل: PUT /repos/{owner}/{repo}/contents/{path} با body {"message":"...","content":"base64"}. توکن از env.GITHUB_TOKEN می‌آید و دیده نمی‌شود.
-قوانین build_apk: وقتی کاربر کد اندروید (زیپ یا متن) فرستاد و APK خواست.
+قوانین github_api: مستقیم به api.github.com می‌زند (نیازی به سرویس متصل ندارد). method GET/POST/PUT/PATCH/DELETE و path نسبی به api.github.com. GET بلافاصله اجرا می‌شود؛ نوشتن/حذف تأیید کاربر می‌خواهد. برای ساخت ریپو: POST /user/repos با body {"name":"..."}. برای آپلود فایل: PUT /repos/{owner}/{repo}/contents/{path} با body {"message":"...","content":"base64"}. برای فورک کردن ریپوی دیگران: POST /repos/{owner}/{repo}/forks (بدون body لازم). برای اجرای workflow: POST /repos/{owner}/{repo}/actions/workflows/{file}/dispatches با body {"ref":"main"} (پاسخ ۲۰۴ یعنی موفق). وضعیت بیلد: GET /repos/{owner}/{repo}/actions/runs?per_page=3. توکن از env.GITHUB_TOKEN می‌آید و دیده نمی‌شود.
+قوانین build_apk: وقتی کاربر کد اندروید واقعی (زیپ با build.gradle یا متن پروژه اندروید) فرستاد و APK خواست. اگر زیپ فقط وب/React بود، build_apk نخواه — اول صادقانه مشکل را بگو و راه واقعی پیشنهاد بده. برای پروژه‌های بزرگ واقعی (VPN، اپ حرفه‌ای): اول ریپوی واقعی متناسب را fork کن (github_api با POST /repos/{owner}/{repo}/forks)، بعد workflow_dispatch برای بیلدش بزن (POST /repos/{owner}/{repo}/actions/workflows/{نام}.yml/dispatches با body {"ref":"main"})، و با /buildstatus یا GET actions/runs وضعیت و APK را بگیر. جستجوی ریپوی مناسب: web_search با عبارت مثل «github X android client open source».
 قوانین create_bot: کاربر فقط توکن و توضیح کار را می‌دهد. ربات را در Cloudflare Workers می‌سازی: Worker جدید + GitHub Actions workflow برای deploy خودکار (code deploy on push). همچنین webhook تلگرام را روی آن Worker تنظیم کن.
 قوانین create_panel: فقط فایل تار/زیپ/بیس۶۴ پروژه را بگیر. ریپو بساز، فایل‌ها را decompile و extract کن، بر اساس نوع پنل (workers/pages/node) فایل wrangler.toml / Dockerfile / cloudflare-pages.json بساز، workflow deploy اضافه کن. اگر پنل Python/Node است GitHub Actions بساز. اگر پنل Worker-سازگار است در Cloudflare Workers deploy کن. قوانین send_telegram_message: توکن می‌تواند از env.TELEGRAM_TOKEN بیاید یا مستقیم داده شود. chat_id هم عددی است.. اگر source دادید به‌صورت متن است، zip لازم نیست. ابزار خودش: ریپو می‌سازد، فایل‌ها را کامیت می‌کند، workflow اندروید اضافه می‌کند و بیلد را اجرا می‌کند. بعد به کاربر بگو «/buildstatus {repo}» را بزند تا وضعیت و فایل APK را بگیرد. اگر کاربر زیپ اندروید فرستاده، نامش را در zip بگذار تا محتوایش به‌عنوان سورس آپلود شود.
 قوانین http_request: فقط از سرویس‌های متصل استفاده کن؛ path نسبی است و با / شروع می‌شود؛ توکن را نمی‌بینی و هرگز نخواه. GET بلافاصله اجرا می‌شود، اما POST/PUT/PATCH/DELETE اول از کاربر تأیید می‌گیرد، پس درخواست را دقیق و کمینه بنویس. اگر مسیر API را نمی‌دانی، مستندات را با read_url یا web_search بخوان. کارهای چندمرحله‌ای را مرحله‌به‌مرحله انجام بده.
@@ -1731,7 +1733,23 @@ async function describeZip(buf, name, size) {
     if (budget <= 0) break;
   }
 
-  const summary = `فایل ZIP: ${name}\nحجم کل: ${fmtSize(size)} | تعداد ورودی‌ها: ${entryCount}\n\n## ساختار پوشه‌ها\n${dirList.map(x => "- " + x).join("\n") || "(بدون پوشه)"}\n\n## انواع فایل\n${extLine}\n\n## فایل‌ها\n${fileList}${entries.length > 60 ? `\n... و ${entries.length - 60} فایل دیگر` : ""}${samples ? "\n" + samples : ""}`;
+  // تشخیص نوع پروژه — تا مدل نداند چه چیزی در دست دارد
+  const allNames = entries.map(e => e.fname).join("\n");
+  const hasGradle = /build\.gradle(\.kts)?|settings\.gradle|gradlew/i.test(allNames);
+  const hasAndroidManifest = /androidmanifest\.xml/i.test(allNames);
+  const isWeb = /(^|\n).*\.(tsx|jsx|vue|svelte)|vite\.config|next\.config|package\.json/i.test(allNames) && !hasGradle;
+  const isFlutter = /pubspec\.yaml/i.test(allNames);
+  const isPython = /requirements\.txt|pyproject\.toml|main\.py/i.test(allNames) && !hasGradle;
+  const isGo = /go\.mod/i.test(allNames);
+  let projectType = "نامشخص";
+  if (hasGradle && hasAndroidManifest) projectType = "پروژه اندروید واقعی (Gradle) ✅ — قابل بیلد APK";
+  else if (isFlutter) projectType = "پروژه Flutter ✅ — قابل بیلد APK (به workflow مخصوص Flutter نیاز دارد)";
+  else if (isWeb) projectType = "⚠️ اپ وب (React/Vite/Next) — از این مستقیم APK ساخته نمی‌شود! به کاربر صادقانه بگو و راه واقعی بده: فورک ریپوی اندروید واقعی یا بازنویسی بومی";
+  else if (isPython) projectType = "پروژه Python — بیلد APK ندارد";
+  else if (isGo) projectType = "پروژه Go — بیلد APK ندارد (با gomobile می‌شود library اندروید ساخت)";
+  else if (hasGradle) projectType = "پروژه Gradle بدون AndroidManifest — بررسی لازم";
+
+  const summary = `فایل ZIP: ${name}\nحجم کل: ${fmtSize(size)} | تعداد ورودی‌ها: ${entryCount}\n🎯 نوع پروژه: ${projectType}\n\n## ساختار پوشه‌ها\n${dirList.map(x => "- " + x).join("\n") || "(بدون پوشه)"}\n\n## انواع فایل\n${extLine}\n\n## فایل‌ها\n${fileList}${entries.length > 60 ? `\n... و ${entries.length - 60} فایل دیگر` : ""}${samples ? "\n" + samples : ""}`;
   return { summary };
 }
 
@@ -1795,19 +1813,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check project type
+        run: |
+          if ls *.gradle.kts *.gradle settings.gradle 1> /dev/null 2>&1; then
+            echo "Gradle project detected"
+          elif ls **/build.gradle* 1> /dev/null 2>&1 || find . -maxdepth 2 -name "build.gradle*" | grep -q .; then
+            echo "Gradle project in subdirectory"
+            echo "SUBDIR=$(dirname $(find . -maxdepth 2 -name build.gradle | head -1))" >> $GITHUB_ENV
+          elif [ -f pubspec.yaml ]; then
+            echo "::error::این پروژه Flutter است — workflow مخصوص Flutter لازم است (setup-flutter + flutter build apk)"
+            exit 1
+          elif [ -f package.json ]; then
+            echo "::error::این زیپ یک اپ وب (React/Vite) است و از آن APK ساخته نمی‌شود. سورس اندروید بومی (با build.gradle و AndroidManifest.xml) لازم است."
+            exit 1
+          else
+            echo "::error::پروژه Gradle اندروید پیدا نشد — زیپ حاوی سورس اندروید نیست."
+            exit 1
+          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
+      - name: Setup Android SDK
+        run: |
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" > /dev/null
       - name: Build (Gradle)
         run: |
-          if ls *.gradle.kts 1> /dev/null 2>&1 || ls *.gradle 1> /dev/null 2>&1; then
-            chmod +x gradlew 2>/dev/null || true
-            ./gradlew assembleDebug 2>/dev/null || gradle assembleDebug
-          else
-            echo "No Gradle project found"; exit 1
+          cd "\${SUBDIR:-.}"
+          if [ ! -f gradlew ]; then
+            echo "gradlew missing — generating wrapper"
+            gradle wrapper --gradle-version 8.7 || true
           fi
+          chmod +x gradlew 2>/dev/null || true
+          ./gradlew assembleDebug --no-daemon --stacktrace || gradle assembleDebug --no-daemon
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
