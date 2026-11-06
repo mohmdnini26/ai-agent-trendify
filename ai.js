@@ -2018,6 +2018,7 @@ async function extractApkFromZip(zipBuf) {
     cdOffset += 46 + nameLen + extraLen + commentLen;
   }
   return null;
+}
 
 
 // ==================== ساخت ربات تلگرام ====================
@@ -2360,4 +2361,3 @@ async function deployPanel(env, { repo, branch = "main" }) {
 }
 
 
-}
