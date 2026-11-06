@@ -887,6 +887,104 @@ async function handleCommand(env, chatId, text, msgId) {
         : "خطا در بازگردانی: " + r);
     }
 
+    case "/aikey": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
+      const p = arg.split(/\s+/).filter(Boolean);
+      if (p.length < 4) {
+        return send(env, chatId,
+          "فرمت: /aikey نام آدرس مدل کلید [vision]\n\n" +
+          "مثال:\n/aikey openrouter https://openrouter.ai/api/v1/chat/completions deepseek/deepseek-chat-v3:free sk-or-xxxx\n" +
+          "/aikey wusrouter https://wusrouter.com/v1/chat/completions gpt-5.6-terra:free sk-ws-xxxx\n\n" +
+          "vision (اختیاری): 1 = تصویر می‌فهمد (پیش‌فرض)، 0 = فقط متن\n" +
+          "اولویت به ترتیب اضافه کردن است؛ کلیدها به نوبت امتحان می‌شوند و اگر یکی از کار افتاد بعدی خودکار جایگزین می‌شود.");
+      }
+      const [rawName, url, model, token, visionArg] = p;
+      const name = rawName.toLowerCase();
+      if (!/^[a-z0-9_-]{2,30}$/.test(name)) return send(env, chatId, "نام باید ۲ تا ۳۰ حرف انگلیسی/عدد/خط‌تیره باشد.");
+      try { const u = new URL(url); if (u.protocol !== "https:") throw 0; } catch { return send(env, chatId, "آدرس باید https معتبر باشد."); }
+      if (!env.VAULT_KEY) return send(env, chatId, "اول باید Secret با نام VAULT_KEY در کلودفلر بسازی تا کلیدها رمزنگاری شوند.");
+      const enc = await encryptSecret(env, token);
+      await env.DB.prepare(
+        "INSERT INTO ai_keys (name, base_url, model, key_enc, enabled, priority, fail_count, vision, added_at) VALUES (?, ?, ?, ?, 1, 100, 0, ?, ?) " +
+        "ON CONFLICT(name) DO UPDATE SET base_url = excluded.base_url, model = excluded.model, key_enc = excluded.key_enc, enabled = 1, fail_count = 0, last_error = NULL, vision = excluded.vision"
+      ).bind(name, url.replace(/\/$/, ""), model, enc, visionArg === "0" ? 0 : 1, Date.now()).run();
+      if (msgId) await tg(env, "deleteMessage", { chat_id: chatId, message_id: msgId }).catch(() => {});
+      return send(env, chatId, `✅ کلید «${name}» ذخیره شد (مدل: ${model}). پیام حاوی کلید حذف شد.\nبا /aitest ${name} تستش کن.`);
+    }
+
+    case "/aikeys": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
+      await ensureSchema(env);
+      const r = await env.DB.prepare("SELECT name, base_url, model, enabled, fail_count, last_error, vision FROM ai_keys ORDER BY priority ASC, added_at ASC").all();
+      if (!r.results.length) return send(env, chatId, "هیچ کلیدی در پایگاه داده نیست. از متغیر env (AI_API_KEY) استفاده می‌شود.\nبرای افزودن: /aikey نام آدرس مدل کلید");
+      return send(env, chatId, r.results.map((k) =>
+        `${k.enabled ? "✅" : "⛔"} ${k.name} — ${k.model}\n   ${k.base_url}${k.vision ? " | 🖼 vision" : " | فقط متن"}${k.fail_count ? `\n   ⚠️ ${k.fail_count} خطا: ${(k.last_error || "").slice(0, 80)}` : ""}`
+      ).join("\n\n"));
+    }
+
+    case "/aidel": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
+      if (!arg) return send(env, chatId, "فرمت: /aidel نام");
+      const r = await env.DB.prepare("DELETE FROM ai_keys WHERE name = ?").bind(arg.toLowerCase()).run();
+      return send(env, chatId, r.meta.changes ? `🗑 کلید «${arg.toLowerCase()}» حذف شد.` : `کلیدی به نام «${arg}» نبود. لیست: /aikeys`);
+    }
+
+    case "/aienable": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
+      if (!arg) return send(env, chatId, "فرمت: /aienable نام");
+      await env.DB.prepare("UPDATE ai_keys SET enabled = 1, fail_count = 0, last_error = NULL WHERE name = ?").bind(arg.toLowerCase()).run();
+      return send(env, chatId, `✅ کلید «${arg.toLowerCase()}» دوباره فعال شد.`);
+    }
+
+    case "/aitest": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
+      await ensureSchema(env);
+      const target = arg.toLowerCase();
+      const rows = await env.DB.prepare("SELECT name, base_url, model, key_enc, vision FROM ai_keys ORDER BY priority ASC, added_at ASC").all();
+      const list = target ? (rows.results || []).filter((k) => k.name === target) : (rows.results || []);
+      if (!list.length) return send(env, chatId, target ? `کلید «${target}» پیدا نشد. لیست: /aikeys` : "هیچ کلیدی در پایگاه داده نیست.");
+      const lines = [];
+      for (const k of list) {
+        let key;
+        try { key = await decryptSecret(env, k.key_enc); } catch (e) { lines.push(`⛔ ${k.name}: رمزگشایی ناموفق`); continue; }
+        try {
+          const res = await fetch(k.base_url, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ model: k.model, messages: [{ role: "user", content: "سلام" }], max_tokens: 20 }),
+            signal: AbortSignal.timeout(30000)
+          });
+          const text = await res.text();
+          let data = null; try { data = JSON.parse(text); } catch {}
+          const content = data?.choices?.[0]?.message?.content;
+          if (res.ok && content) lines.push(`✅ ${k.name} (${k.model}): جواب داد — «${content.trim().slice(0, 40)}»`);
+          else lines.push(`⛔ ${k.name}: HTTP ${res.status} — ${text.slice(0, 120)}`);
+        } catch (e) { lines.push(`⛔ ${k.name}: شبکه — ${e.message}`); }
+      }
+      return send(env, chatId, lines.join("\n"));
+    }
+
+    case "/aimodels": {
+      if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
+      if (!arg) return send(env, chatId, "فرمت: /aimodels آدرس_پایه کلید\nمثال: /aimodels https://openrouter.ai/api/v1 sk-or-xxxx\n\nمدل‌های رایگان (حاوی :free) را نشان می‌دهد و می‌توانی با /aikey اضافه‌شان کنی.");
+      const p = arg.split(/\s+/);
+      const base = p[0].replace(/\/$/, "");
+      const key = p[1];
+      try {
+        const res = await fetch(base + "/models", {
+          headers: key ? { Authorization: `Bearer ${key}` } : {},
+          signal: AbortSignal.timeout(30000)
+        });
+        const data = await res.json().catch(() => null);
+        const ids = data?.data?.map((m) => m.id) || [];
+        const free = ids.filter((i) => /:free$|free/i.test(i)).slice(0, 30);
+        return send(env, chatId, `مدل‌های رایگان ${base} (${free.length} از ${ids.length} کل):\n\n` +
+          (free.length ? free.map((f) => `• ${f}`).join("\n") + `\n\nافزودن: /aikey نام ${base}/chat/completions نام-مدل کلید` : "مدل رایگانی پیدا نشد. کل لیست:\n" + ids.slice(0, 30).map((f) => `• ${f}`).join("\n")));
+      } catch (e) {
+        return send(env, chatId, `خطا در گرفتن مدل‌ها: ${e.message}`);
+      }
+    }
+
     case "/connect": {
       if (chatId !== String(env.OWNER_ID)) return send(env, chatId, "🔐 این دستور فقط برای ادمین ربات است.");
       const p = arg.split(/\s+/).filter(Boolean);
@@ -966,25 +1064,58 @@ async function handleCommand(env, chatId, text, msgId) {
 // ==================== توابع کمکی ====================
 
 // تماس با مدل: ابتدا سرویس اصلی، و اگر شکست خورد (مثلاً سهمیه تمام شد) سرویس پشتیبان (اختیاری)
-async function callAI(env, messages, opts = {}) {
-  const primary = await callProvider(
-    { url: env.AI_API_URL, key: env.AI_API_KEY, model: env.AI_MODEL, effort: env.AI_REASONING_EFFORT },
-    messages, opts, 2
-  );
-  if (!isAIError(primary)) return primary;
-
-  if (env.AI_FALLBACK_URL && env.AI_FALLBACK_KEY && env.AI_FALLBACK_MODEL) {
-    const textOnly = messages.map((m) => Array.isArray(m.content)
-      ? { ...m, content: m.content.filter((x) => x.type === "text").map((x) => x.text).join("\n") + "\n[تصویر حذف شد: مدل پشتیبان تصویر نمی‌فهمد]" }
-      : m);
-    const fb = await callProvider(
-      { url: env.AI_FALLBACK_URL, key: env.AI_FALLBACK_KEY, model: env.AI_FALLBACK_MODEL },
-      textOnly, opts, 1
-    );
-    if (!isAIError(fb)) return fb;
-    return `${AI_ERR} اصلی: ${primary.slice(AI_ERR.length + 1, AI_ERR.length + 200)} | پشتیبان: ${fb.slice(AI_ERR.length + 1, AI_ERR.length + 200)}`;
+async function getAiKeys(env) {
+  // لیست کلیدهای فعال به ترتیب اولویت؛ اگر جدول خالی بود از متغیرهای env استفاده کن
+  const rows = await env.DB.prepare("SELECT name, base_url, model, key_enc, vision FROM ai_keys WHERE enabled = 1 ORDER BY priority ASC, added_at ASC").all().catch(() => ({ results: [] }));
+  const keys = [];
+  for (const r of (rows.results || [])) {
+    try {
+      const key = await decryptSecret(env, r.key_enc);
+      keys.push({ name: r.name, url: r.base_url, key, model: r.model, vision: !!r.vision });
+    } catch (e) { console.error("ai_keys decrypt fail", r.name, e.message); }
   }
-  return primary;
+  if (!keys.length && env.AI_API_KEY && env.AI_API_URL) {
+    keys.push({ name: "env-primary", url: env.AI_API_URL, key: env.AI_API_KEY, model: env.AI_MODEL || "default", vision: true });
+  }
+  if (env.AI_FALLBACK_URL && env.AI_FALLBACK_KEY && env.AI_FALLBACK_MODEL) {
+    keys.push({ name: "env-fallback", url: env.AI_FALLBACK_URL, key: env.AI_FALLBACK_KEY, model: env.AI_FALLBACK_MODEL, vision: false });
+  }
+  return keys;
+}
+
+async function callAI(env, messages, opts = {}) {
+  const keys = await getAiKeys(env);
+  if (!keys.length) return `${AI_ERR} هیچ کلید هوش مصنوعی تنظیم نشده. با /aikey یک کلید اضافه کن.`;
+
+  const hasImage = messages.some((m) => Array.isArray(m.content) && m.content.some((x) => x.type === "image_url"));
+  const errors = [];
+  for (const k of keys) {
+    let msgs = messages;
+    if (hasImage && !k.vision) {
+      msgs = messages.map((m) => Array.isArray(m.content)
+        ? { ...m, content: m.content.filter((x) => x.type === "text").map((x) => x.text).join("\n") + "\n[تصویر حذف شد: این مدل تصویر نمی‌فهمد]" }
+        : m);
+    }
+    const out = await callProvider({ url: k.url, key: k.key, model: k.model, effort: env.AI_REASONING_EFFORT }, msgs, opts, 1);
+    if (!isAIError(out)) {
+      // موفق: اگر قبلا خطا خورده بود صفر کن
+      if (k.name !== "env-primary" && k.name !== "env-fallback") {
+        await env.DB.prepare("UPDATE ai_keys SET fail_count = 0, last_error = NULL WHERE name = ?").bind(k.name).run().catch(() => {});
+      }
+      return out;
+    }
+    errors.push(`${k.name}: ${out.slice(AI_ERR.length, AI_ERR.length + 120)}`);
+    // خطای قطعی (کلید باطل/سهمیه/سرور): fail_count را بالا ببر؛ بعد از ۳ خطا خودکار غیرفعال
+    if (k.name !== "env-primary" && k.name !== "env-fallback") {
+      const permanent = /HTTP (40[013]|429)/.test(out);
+      if (permanent) {
+        await env.DB.prepare("UPDATE ai_keys SET fail_count = fail_count + 1, last_error = ? WHERE name = ?")
+          .bind(out.slice(AI_ERR.length, AI_ERR.length + 300), k.name).run().catch(() => {});
+        await env.DB.prepare("UPDATE ai_keys SET enabled = 0 WHERE name = ? AND fail_count >= 3").bind(k.name).run().catch(() => {});
+      }
+    }
+  }
+  return `${AI_ERR} همه کلیدها شکست خوردند:\n` + errors.join("\n");
 }
 
 async function callProvider(cfg, messages, opts, attempts) {
@@ -1250,7 +1381,8 @@ async function ensureSchema(env) {
     q("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"),
     q("CREATE TABLE IF NOT EXISTS credentials (name TEXT PRIMARY KEY, base_url TEXT, header TEXT, prefix TEXT, secret_enc TEXT, created_at INTEGER)"),
     q("CREATE TABLE IF NOT EXISTS pending (id TEXT PRIMARY KEY, chat_id TEXT, kind TEXT, payload TEXT, created_at INTEGER)"),
-    q("CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, service TEXT, method TEXT, url TEXT, status INTEGER, approved INTEGER)")
+    q("CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, service TEXT, method TEXT, url TEXT, status INTEGER, approved INTEGER)"),
+    q("CREATE TABLE IF NOT EXISTS ai_keys (name TEXT PRIMARY KEY, base_url TEXT, model TEXT, key_enc TEXT, enabled INTEGER DEFAULT 1, priority INTEGER DEFAULT 100, fail_count INTEGER DEFAULT 0, last_error TEXT, vision INTEGER DEFAULT 1, added_at INTEGER)")
   ]);
   schemaReady = true;
 }
