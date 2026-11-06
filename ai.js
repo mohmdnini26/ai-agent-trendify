@@ -136,12 +136,7 @@ export default {
       }
       notifyChat = chatId;
 
-      // جلوگیری از پردازش تکراری (تلگرام اگر دیر جواب بگیرد دوباره می‌فرستد)
-      if (typeof payload.update_id === "number") {
-        const last = parseInt((await getSetting(env, "last_update_id")) || "-1", 10);
-        if (payload.update_id <= last) return new Response("OK");
-        await setSetting(env, "last_update_id", String(payload.update_id));
-      }
+      // No duplicate check needed — Telegram sends each update once; Workers isolate handles concurrency
 
       if (cq) {
         await handleCallback(env, cq);
