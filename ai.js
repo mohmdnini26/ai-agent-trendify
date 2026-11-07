@@ -2403,7 +2403,34 @@ async function createTelegramBot(env, { name, token, description }) {
   const botName = String(name).replace(/[^a-z0-9_-]/gi, '-').toLowerCase().slice(0, 40);
   const botUsername = "bot_" + Date.now().toString(36);
   const ghUser = (env.GITHUB_REPO || "mohmdnini26/ai-agent-trendify").split('/')[0];
-  const ghRepo = `${ghUser}/bot-${botName}-${Date.now().toString(36).slice(-6)}`;
+  let ghRepo = `${ghUser}/bot-${botName}-${Date.now().toString(36).slice(-6)}`; let ghRepoVar = null;
+
+  // ری‌استارت: اگر همین توکن قبلاً ثبت شده، ریپوی قبلی را پیدا کن و فقط کد را دوباره دیپلوی کن
+  let existingRepo = null;
+  try {
+    const rows = await env.DB.prepare("SELECT name, base_url, secret_enc FROM credentials WHERE header = 'bot_token'").all();
+    for (const row of rows.results || []) {
+      if (atob(row.secret_enc || "") === token) { existingRepo = row.base_url; break; }
+    }
+  } catch {}
+  if (existingRepo && /^([\w.-]+)\/([\w.-]+)$/.test(existingRepo)) {
+    // کد فعلی worker.js را از ریپو بگیر و دوباره دیپلوی + وبهوک کن
+    const fRes = await ghApi(env, `/repos/${existingRepo}/contents/worker.js`);
+    const fJson = await fRes.json().catch(() => null);
+    if (fJson?.content) {
+      const code = new TextDecoder().decode(Uint8Array.from(atob(fJson.content.replace(/\n/g, "")), (c) => c.charCodeAt(0)));
+      const redeploy = await deployBotWorker(env, botName, code, token);
+      if (redeploy.error) return "ری‌استارت ناموفق (دیپلوی): " + redeploy.error;
+      const wh = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: redeploy.url, allowed_updates: ["message", "callback_query"], drop_pending_updates: true })
+      }).then(r => r.json()).catch(() => ({ ok: false }));
+      return `🔄 ربات «${name}» ری‌استارت شد!\n🌐 ورکر: ${redeploy.url}\n🔗 وبهوک: ${wh.ok ? "وصل شد ✅ (پیام‌های قدیمی پاک شد)" : "خطا: " + (wh.description || "?")}\n\nالان در ربات /start بزن.`;
+    }
+    // اگر فایل نبود، به مسیر ساخت کامل ادامه بده (با ریپوی قبلی)
+    ghRepo = existingRepo;
+  }
 
   // Create GitHub repo
   const ghR = await ghApi(env, "/user/repos", { method: "POST", body: JSON.stringify({ name: ghRepo.split('/')[1], private: false, auto_init: true, description: "تلگرام ربات: " + description }) });
@@ -2574,7 +2601,7 @@ export default {
   const wh = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: workerUrl, secret_token: crypto.randomUUID().replace(/-/g, ""), drop_pending_updates: false })
+    body: JSON.stringify({ url: workerUrl, allowed_updates: ["message", "callback_query"], drop_pending_updates: true })
   }).then(r => r.json()).catch(() => ({ ok: false }));
 
   // Save bot in DB
